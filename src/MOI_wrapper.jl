@@ -15,6 +15,19 @@ function _is_parameter(term::MOI.ScalarQuadraticTerm)
     return _is_parameter(term.variable_1) || _is_parameter(term.variable_2)
 end
 
+@kwdef mutable struct Counters
+    neval_obj::Int = 0
+    neval_cons::Int = 0
+    neval_grad::Int = 0
+    neval_jac::Int = 0
+    neval_hess::Int = 0
+    teval_obj::Float64 = 0.
+    teval_cons::Float64 = 0.
+    teval_grad::Float64 = 0.
+    teval_jac::Float64 = 0.
+    teval_hess::Float64 = 0.
+end
+
 """
     Optimizer()
 
@@ -42,6 +55,7 @@ mutable struct Optimizer <: MOI.AbstractOptimizer
     qp_data::QPBlockData{Float64}
     nlp_model::Union{Nothing,MOI.Nonlinear.Model}
     callback::Union{Nothing,Function}
+    counters::Counters
 
     function Optimizer()
         return new(
@@ -62,7 +76,8 @@ mutable struct Optimizer <: MOI.AbstractOptimizer
             nothing,
             QPBlockData{Float64}(),
             nothing,
-            nothing,
+            nothing
+            Counters(),
         )
     end
 end
@@ -675,25 +690,31 @@ end
 ### Eval_F_CB
 
 function MOI.eval_objective(model::Optimizer, x)
-    # TODO(odow): FEASIBILITY_SENSE could produce confusing solver output if
-    # a nonzero objective is set.
-    if model.sense == MOI.FEASIBILITY_SENSE
-        return 0.0
-    elseif model.nlp_data.has_objective
-        return MOI.eval_objective(model.nlp_data.evaluator, x)
+    model.counters.neval_obj += 1
+    model.counters.teval_obj += @elapsed begin
+        # TODO(odow): FEASIBILITY_SENSE could produce confusing solver output if
+        # a nonzero objective is set.
+        if model.sense == MOI.FEASIBILITY_SENSE
+            return 0.0
+        elseif model.nlp_data.has_objective
+            return MOI.eval_objective(model.nlp_data.evaluator, x)
+        end
+        return MOI.eval_objective(model.qp_data, x)
     end
-    return MOI.eval_objective(model.qp_data, x)
 end
 
 ### Eval_Grad_F_CB
 
 function MOI.eval_objective_gradient(model::Optimizer, grad, x)
-    if model.sense == MOI.FEASIBILITY_SENSE
-        grad .= zero(eltype(grad))
-    elseif model.nlp_data.has_objective
-        MOI.eval_objective_gradient(model.nlp_data.evaluator, grad, x)
-    else
-        MOI.eval_objective_gradient(model.qp_data, grad, x)
+    model.counters.neval_grad += 1
+    model.counters.teval_grad += @elapsed begin
+        if model.sense == MOI.FEASIBILITY_SENSE
+            grad .= zero(eltype(grad))
+        elseif model.nlp_data.has_objective
+            MOI.eval_objective_gradient(model.nlp_data.evaluator, grad, x)
+        else
+            MOI.eval_objective_gradient(model.qp_data, grad, x)
+        end
     end
     return
 end
@@ -701,9 +722,12 @@ end
 ### Eval_G_CB
 
 function MOI.eval_constraint(model::Optimizer, g, x)
-    MOI.eval_constraint(model.qp_data, g, x)
-    g_nlp = view(g, (length(model.qp_data)+1):length(g))
-    MOI.eval_constraint(model.nlp_data.evaluator, g_nlp, x)
+    model.counters.neval_con += 1
+    model.counters.teval_con += @elapsed begin
+        MOI.eval_constraint(model.qp_data, g, x)
+        g_nlp = view(g, (length(model.qp_data)+1):length(g))
+        MOI.eval_constraint(model.nlp_data.evaluator, g_nlp, x)
+    end
     return
 end
 
@@ -721,9 +745,12 @@ function MOI.jacobian_structure(model::Optimizer)
 end
 
 function MOI.eval_constraint_jacobian(model::Optimizer, values, x)
-    offset = MOI.eval_constraint_jacobian(model.qp_data, values, x)
-    nlp_values = view(values, offset:length(values))
-    MOI.eval_constraint_jacobian(model.nlp_data.evaluator, nlp_values, x)
+    model.counters.neval_jac += 1
+    model.counters.teval_jac += @elapsed begin
+        offset = MOI.eval_constraint_jacobian(model.qp_data, values, x)
+        nlp_values = view(values, offset:length(values))
+        MOI.eval_constraint_jacobian(model.nlp_data.evaluator, nlp_values, x)
+    end
     return
 end
 
@@ -736,10 +763,13 @@ function MOI.hessian_lagrangian_structure(model::Optimizer)
 end
 
 function MOI.eval_hessian_lagrangian(model::Optimizer, H, x, σ, μ)
-    offset = MOI.eval_hessian_lagrangian(model.qp_data, H, x, σ, μ)
-    H_nlp = view(H, offset:length(H))
-    μ_nlp = view(μ, (length(model.qp_data)+1):length(μ))
-    MOI.eval_hessian_lagrangian(model.nlp_data.evaluator, H_nlp, x, σ, μ_nlp)
+    model.counters.neval_hess += 1
+    model.counters.teval_hess += @elapsed begin
+        offset = MOI.eval_hessian_lagrangian(model.qp_data, H, x, σ, μ)
+        H_nlp = view(H, offset:length(H))
+        μ_nlp = view(μ, (length(model.qp_data)+1):length(μ))
+        MOI.eval_hessian_lagrangian(model.nlp_data.evaluator, H_nlp, x, σ, μ_nlp)
+    end
     return
 end
 
