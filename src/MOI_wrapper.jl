@@ -76,7 +76,7 @@ mutable struct Optimizer <: MOI.AbstractOptimizer
             nothing,
             QPBlockData{Float64}(),
             nothing,
-            nothing
+            nothing,
             Counters(),
         )
     end
@@ -722,8 +722,8 @@ end
 ### Eval_G_CB
 
 function MOI.eval_constraint(model::Optimizer, g, x)
-    model.counters.neval_con += 1
-    model.counters.teval_con += @elapsed begin
+    model.counters.neval_cons += 1
+    model.counters.teval_cons += @elapsed begin
         MOI.eval_constraint(model.qp_data, g, x)
         g_nlp = view(g, (length(model.qp_data)+1):length(g))
         MOI.eval_constraint(model.nlp_data.evaluator, g_nlp, x)
